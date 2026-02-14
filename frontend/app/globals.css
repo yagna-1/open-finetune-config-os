@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f7f1e5;
+  --ink: #16120d;
+  --accent-a: #cf4f1f;
+  --accent-b: #0f766e;
+  --accent-c: #1f2f8f;
+  --panel: rgba(255, 255, 255, 0.78);
+  --line: rgba(22, 18, 13, 0.16);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+  background: radial-gradient(circle at 8% 12%, rgba(207, 79, 31, 0.22), transparent 30%),
+    radial-gradient(circle at 84% 10%, rgba(31, 47, 143, 0.22), transparent 34%),
+    radial-gradient(circle at 56% 88%, rgba(15, 118, 110, 0.18), transparent 30%),
+    linear-gradient(145deg, #f7f1e5 0%, #efe8d8 54%, #e7decd 100%);
+  color: var(--ink);
+  font-family: var(--font-display), "Times New Roman", serif;
+}
+
+code,
+pre,
+.mono {
+  font-family: var(--font-mono), "Courier New", monospace;
+}
+
+.glass-panel {
+  background: var(--panel);
+  backdrop-filter: blur(11px);
+}
+
+::selection {
+  background: rgba(207, 79, 31, 0.2);
+  color: #0f0b07;
+}
+
+.fade-up {
+  animation: fade-up 380ms ease-out both;
+}
+
+.pulse-orb {
+  animation: pulse-orb 4.6s ease-in-out infinite;
+}
+
+.meter-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(22, 18, 13, 0.1);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-a) 0%, var(--accent-b) 100%);
+  transition: width 320ms ease;
+}
+
+.noise-grid {
+  position: relative;
+}
+
+.noise-grid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+      to right,
+      rgba(22, 18, 13, 0.06) 1px,
+      transparent 1px
+    ),
+    linear-gradient(to bottom, rgba(22, 18, 13, 0.05) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(circle at center, black 40%, transparent 92%);
+  opacity: 0.34;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-orb {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.8;
+    transform: scale(1.08);
+  }
+}

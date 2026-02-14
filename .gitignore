@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.pytest_cache/
+.venv/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+
+# Runtime artifacts
+artifacts/
+*.db
+
+# OS/IDE
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,26 @@
+app = "ft-config-engine"
+primary_region = "ord"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  FT_CONFIG_DATASET_PATH = "/app/finetuning_configs_final.jsonl"
+  CORS_ORIGINS = "https://ft-config-engine.fly.dev"
+  TRUSTED_HOSTS = "ft-config-engine.fly.dev"
+  REQUIRE_API_KEY = "true"
+  EXPOSE_INTERNALS = "false"
+  RATE_LIMIT_PER_MINUTE = "60"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

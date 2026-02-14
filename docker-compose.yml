@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ft-config-postgres
+    environment:
+      POSTGRES_DB: ft_config_engine
+      POSTGRES_USER: ft_user
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ft_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ft_user -d ft_config_engine"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ft-config-backend
+    environment:
+      DATABASE_URL: postgresql://ft_user:${POSTGRES_PASSWORD:-ft_password}@postgres:5432/ft_config_engine
+      FT_CONFIG_DATASET_PATH: /app/finetuning_configs_final.jsonl,/app/Fixed.jsonl,/app/raw_user_dataset.jsonl
+      FT_CONFIG_ML_RERANKER_PATH: ${FT_CONFIG_ML_RERANKER_PATH:-/app/artifacts/ml_reranker.joblib}
+      FT_CONFIG_HP_PREDICTOR_PATH: ${FT_CONFIG_HP_PREDICTOR_PATH:-/app/artifacts/hp_predictor.joblib}
+      FT_CONFIG_ML_RERANKER_CANARY_PATH: ${FT_CONFIG_ML_RERANKER_CANARY_PATH:-}
+      FT_CONFIG_HP_PREDICTOR_CANARY_PATH: ${FT_CONFIG_HP_PREDICTOR_CANARY_PATH:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
+      TRUSTED_HOSTS: ${TRUSTED_HOSTS:-localhost,127.0.0.1,backend}
+      MODEL_REGISTRY_PATH: ${MODEL_REGISTRY_PATH:-/app/artifacts/model_registry.json}
+      RETRAINING_STATE_PATH: ${RETRAINING_STATE_PATH:-/tmp/ft_config_retraining_state.json}
+      API_KEY: ${API_KEY:-}
+      REQUIRE_API_KEY: ${REQUIRE_API_KEY:-false}
+      EXPOSE_INTERNALS: ${EXPOSE_INTERNALS:-false}
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-60}
+      HEALTH_RATE_LIMIT: ${HEALTH_RATE_LIMIT:-120/minute}
+      READ_RATE_LIMIT: ${READ_RATE_LIMIT:-60/minute}
+      RECENT_RATE_LIMIT: ${RECENT_RATE_LIMIT:-30/minute}
+      RECOMMEND_RATE_LIMIT: ${RECOMMEND_RATE_LIMIT:-40/minute}
+      TELEMETRY_RATE_LIMIT: ${TELEMETRY_RATE_LIMIT:-60/minute}
+      GOVERNANCE_RATE_LIMIT: ${GOVERNANCE_RATE_LIMIT:-30/minute}
+      RETRAIN_RATE_LIMIT: ${RETRAIN_RATE_LIMIT:-20/minute}
+      CANARY_FRACTION: ${CANARY_FRACTION:-0.05}
+      RETRAIN_CHECK_ON_TELEMETRY: ${RETRAIN_CHECK_ON_TELEMETRY:-true}
+      AUTO_RETRAIN_ON_TELEMETRY: ${AUTO_RETRAIN_ON_TELEMETRY:-false}
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./artifacts:/app/artifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ft-config-frontend
+    environment:
+      API_BASE_URL_SERVER: http://backend:8000
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+      NEXT_PUBLIC_API_KEY: ${API_KEY:-}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

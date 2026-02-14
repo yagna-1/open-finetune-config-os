@@ -1,0 +1,185 @@
+# %% [markdown]
+# # Fine-Tuning Notebook: Causal LM LoRA
+# Platform: `{{ platform }}` (`{{ plan }}`) | GPU Target: `{{ gpu }}`
+# %%
+import os
+import subprocess
+import sys
+
+PACKAGES = {{ dependencies }}
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *PACKAGES])
+# %%
+import torch
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+# %%
+from datasets import load_dataset
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    Trainer,
+    TrainingArguments,
+    DataCollatorForLanguageModeling,
+)
+from peft import LoraConfig, TaskType, get_peft_model
+# %%
+MODEL_NAME = "{{ model_name }}"
+DATASET_NAME = "{{ dataset_name }}"
+MODEL_ALIASES = {{ model_aliases }}
+DATASET_ALIASES = {{ dataset_aliases }}
+GATED_MODEL_PREFIXES = {{ gated_model_prefixes }}
+
+model_key = MODEL_NAME.strip().lower()
+dataset_key = DATASET_NAME.strip().lower()
+MODEL_ID = MODEL_ALIASES.get(model_key, MODEL_NAME)
+DATASET_ID = DATASET_ALIASES.get(dataset_key, DATASET_NAME)
+print("Resolved model:", MODEL_ID)
+print("Resolved dataset:", DATASET_ID)
+
+MAX_LENGTH = {{ max_seq_length }}
+LEARNING_RATE = {{ learning_rate }}
+EPOCHS = {{ epochs }}
+BATCH_SIZE = {{ batch_size_per_device }}
+GRAD_ACCUM = {{ gradient_accumulation_steps }}
+LORA_RANK = {{ lora_rank }}
+
+try:
+    from huggingface_hub import login
+except Exception:
+    login = None
+
+hf_token = (
+    os.environ.get("HF_TOKEN")
+    or os.environ.get("HUGGINGFACE_HUB_TOKEN")
+    or os.environ.get("HUGGINGFACEHUB_API_TOKEN")
+)
+if hf_token and login is not None:
+    login(token=hf_token, add_to_git_credential=False)
+    print("Hugging Face token detected and login applied.")
+elif any(MODEL_ID.lower().startswith(prefix.lower()) for prefix in GATED_MODEL_PREFIXES):
+    print("Warning: model access may require accepted Hugging Face terms and a valid HF_TOKEN.")
+
+dataset = load_dataset(DATASET_ID)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, use_fast=True)
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+tokenizer.padding_side = "right"
+
+if "train" in dataset:
+    train_split = "train"
+else:
+    train_split = next(iter(dataset.keys()))
+
+def as_text(value):
+    if value is None:
+        return ""
+    return str(value)
+
+def build_training_text(example):
+    if not isinstance(example, dict):
+        return as_text(example).strip()
+
+    messages = example.get("messages")
+    if isinstance(messages, list):
+        lines = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = as_text(msg.get("role") or "user").strip() or "user"
+            content = as_text(msg.get("content")).strip()
+            if content:
+                lines.append(f"{role}: {content}")
+        if lines:
+            return "\n".join(lines)
+
+    instruction = as_text(example.get("instruction")).strip()
+    input_text = as_text(example.get("input")).strip()
+    output_text = (
+        as_text(example.get("output")).strip()
+        or as_text(example.get("response")).strip()
+        or as_text(example.get("answer")).strip()
+    )
+    if instruction:
+        parts = [f"### Instruction:\n{instruction}"]
+        if input_text:
+            parts.append(f"### Input:\n{input_text}")
+        if output_text:
+            parts.append(f"### Response:\n{output_text}")
+        return "\n\n".join(parts)
+
+    for candidate in ["text", "prompt", "content", "question"]:
+        candidate_value = as_text(example.get(candidate)).strip()
+        if not candidate_value:
+            continue
+        if output_text and candidate in {"prompt", "question"}:
+            return f"{candidate_value}\n\n{output_text}"
+        return candidate_value
+
+    return ""
+
+def preprocess(batch):
+    keys = list(batch.keys())
+    row_count = len(batch[keys[0]]) if keys else 0
+    formatted = []
+    for idx in range(row_count):
+        row = {key: batch[key][idx] for key in keys}
+        value = build_training_text(row)
+        formatted.append(value if value else " ")
+    return tokenizer(formatted, truncation=True, max_length=MAX_LENGTH)
+
+tokenized = dataset.map(preprocess, batched=True, remove_columns=dataset[train_split].column_names)
+# %%
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    torch_dtype=torch.{{ "float16" if precision == "fp16" else "bfloat16" if precision == "bf16" else "float32" }},
+)
+model.config.use_cache = False
+if hasattr(model, "gradient_checkpointing_enable"):
+    model.gradient_checkpointing_enable()
+
+lora_config = LoraConfig(
+    r=LORA_RANK,
+    lora_alpha=max(16, LORA_RANK * 2),
+    lora_dropout=0.05,
+    task_type=TaskType.CAUSAL_LM,
+)
+model = get_peft_model(model, lora_config)
+# %%
+args = TrainingArguments(
+    output_dir="./outputs",
+    learning_rate=LEARNING_RATE,
+    per_device_train_batch_size=BATCH_SIZE,
+    per_device_eval_batch_size=BATCH_SIZE,
+    gradient_accumulation_steps=GRAD_ACCUM,
+    num_train_epochs=EPOCHS,
+    fp16={{ "True" if precision == "fp16" else "False" }},
+    bf16={{ "True" if precision == "bf16" else "False" }},
+    evaluation_strategy="no",
+    save_strategy="epoch",
+    logging_steps=20,
+    report_to="none",
+    seed=42,
+    data_seed=42,
+    group_by_length=True,
+)
+
+trainer = Trainer(
+    model=model,
+    args=args,
+    train_dataset=tokenized[train_split],
+    eval_dataset=tokenized["validation"] if "validation" in tokenized else (tokenized["test"] if "test" in tokenized else None),
+    tokenizer=tokenizer,
+    data_collator=DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False),
+)
+trainer.train()
+# %%
+trainer.save_model("./final_model")
+tokenizer.save_pretrained("./final_model")
+print("Saved artifacts to ./final_model")
+{% if push_to_hub %}
+# %%
+trainer.push_to_hub("{{ huggingface_repo_id }}")
+tokenizer.push_to_hub("{{ huggingface_repo_id }}")
+print("Pushed to Hugging Face Hub: {{ huggingface_repo_id }}")
+{% endif %}

@@ -1,0 +1,97 @@
+# %% [markdown]
+# # Fine-Tuning Notebook: Summarization (T5)
+# Platform: `{{ platform }}` (`{{ plan }}`) | GPU Target: `{{ gpu }}`
+# %%
+import subprocess
+import sys
+
+PACKAGES = {{ dependencies }}
+subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", *PACKAGES])
+# %%
+import torch
+print("CUDA available:", torch.cuda.is_available())
+if torch.cuda.is_available():
+    print("GPU:", torch.cuda.get_device_name(0))
+# %%
+from datasets import load_dataset
+from transformers import (
+    AutoTokenizer,
+    AutoModelForSeq2SeqLM,
+    DataCollatorForSeq2Seq,
+    Seq2SeqTrainer,
+    Seq2SeqTrainingArguments,
+)
+{% if adapter_type != "none" %}
+from peft import LoraConfig, TaskType, get_peft_model
+{% endif %}
+# %%
+MODEL_NAME = "{{ model_name }}"
+DATASET_NAME = "{{ dataset_name }}"
+MAX_LENGTH = {{ max_seq_length }}
+LEARNING_RATE = {{ learning_rate }}
+EPOCHS = {{ epochs }}
+BATCH_SIZE = {{ batch_size_per_device }}
+GRAD_ACCUM = {{ gradient_accumulation_steps }}
+
+dataset = load_dataset(DATASET_NAME)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+def preprocess(batch):
+    inputs = ["summarize: " + doc for doc in batch["document"]]
+    model_inputs = tokenizer(inputs, max_length=MAX_LENGTH, truncation=True)
+    labels = tokenizer(
+        text_target=batch["summary"],
+        max_length=max(32, MAX_LENGTH // 2),
+        truncation=True,
+    )
+    model_inputs["labels"] = labels["input_ids"]
+    return model_inputs
+
+tokenized = dataset.map(preprocess, batched=True, remove_columns=dataset["train"].column_names)
+# %%
+model = AutoModelForSeq2SeqLM.from_pretrained(MODEL_NAME)
+{% if adapter_type != "none" %}
+lora_config = LoraConfig(
+    r={{ lora_rank }},
+    lora_alpha={{ lora_rank * 2 if lora_rank > 0 else 16 }},
+    lora_dropout=0.05,
+    task_type=TaskType.SEQ_2_SEQ_LM,
+)
+model = get_peft_model(model, lora_config)
+{% endif %}
+# %%
+args = Seq2SeqTrainingArguments(
+    output_dir="./outputs",
+    learning_rate=LEARNING_RATE,
+    per_device_train_batch_size=BATCH_SIZE,
+    per_device_eval_batch_size=BATCH_SIZE,
+    gradient_accumulation_steps=GRAD_ACCUM,
+    num_train_epochs=EPOCHS,
+    predict_with_generate=True,
+    fp16={{ "True" if precision == "fp16" else "False" }},
+    bf16={{ "True" if precision == "bf16" else "False" }},
+    evaluation_strategy="epoch",
+    save_strategy="epoch",
+    logging_steps=20,
+    report_to="none",
+)
+
+trainer = Seq2SeqTrainer(
+    model=model,
+    args=args,
+    train_dataset=tokenized["train"],
+    eval_dataset=tokenized["validation"] if "validation" in tokenized else tokenized["train"],
+    tokenizer=tokenizer,
+    data_collator=DataCollatorForSeq2Seq(tokenizer=tokenizer, model=model),
+)
+trainer.train()
+# %%
+trainer.save_model("./final_model")
+tokenizer.save_pretrained("./final_model")
+print("Saved artifacts to ./final_model")
+{% if push_to_hub %}
+# %%
+trainer.push_to_hub("{{ huggingface_repo_id }}")
+tokenizer.push_to_hub("{{ huggingface_repo_id }}")
+print("Pushed to Hugging Face Hub: {{ huggingface_repo_id }}")
+{% endif %}
